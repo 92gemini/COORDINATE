@@ -59,6 +59,14 @@ button:disabled{opacity:.5;cursor:default}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes s{to{transform:rotate(360deg)}}
 #inst{border-color:var(--acc)}
+.thumbs .crop{position:absolute;left:-6px;bottom:-6px;background:var(--acc);color:#fff;border-radius:50%;width:26px;height:26px;font-size:13px;line-height:26px;text-align:center;cursor:pointer;border:2px solid var(--card)}
+.thumbs .cut{outline:3px solid var(--acc);border-radius:8px}
+#ed{position:fixed;inset:0;background:#111;z-index:50;display:flex;flex-direction:column;padding:10px;gap:8px}
+#ed .wrap{flex:1;display:flex;align-items:center;justify-content:center;min-height:0}
+#ed canvas{max-width:100%;max-height:100%;touch-action:none;background:#000}
+#ed .row{justify-content:center;margin:0}
+#ed p{color:#ddd;font-size:13px;margin:0;text-align:center}
+.pt .res .low{color:var(--warn)}
 </style>
 </head>
 <body>
@@ -123,7 +131,7 @@ button:disabled{opacity:.5;cursor:default}
     <span id="status" class="msg"></span>
   </div>
   <div class="bar hide" id="bar"><i></i></div>
-  <p class="hint">La prima lettura scarica il lettore di testo (qualche MB): serve internet solo la prima volta.</p>
+  <p class="hint">Foto: dritta, ben illuminata, da vicino. Con ✂ sulla miniatura ritagli solo l'elenco e la raddrizzi. La prima lettura scarica il lettore (serve internet solo la prima volta).</p>
 </section>
 
 <section class="card">
@@ -154,10 +162,16 @@ button:disabled{opacity:.5;cursor:default}
 </main>
 
 
+<div id="ed" class="hide">
+  <p>Trascina col dito per selezionare solo l'elenco delle coordinate</p>
+  <div class="wrap"><canvas id="edCv"></canvas></div>
+  <div class="row"><button id="edL">↺</button><button id="edR">↻</button><button id="edAll">Tutta</button><button id="edNo">Annulla</button><button class="pri" id="edOk">OK</button></div>
+</div>
+
 <script>
 (()=>{
 const $=id=>document.getElementById(id);
-const S={datum:'wgs84',files:[],points:[]};
+const S={datum:'wgs84',files:[],points:[],crops:new Map(),low:new Set()};
 const SYS={wgs84:[['utm','UTM (Est / Nord)'],['geo','Geografiche (gradi)']],
            ed50:[['utm','UTM ED50 (Est / Nord)'],['geo','Geografiche ED50 (gradi)']],
            roma40:[['gb','Gauss-Boaga (Est / Nord)'],['geo','Geografiche Roma40 (gradi)'],['utm','UTM su Roma40']]};
@@ -191,19 +205,90 @@ function drawThumbs(){const t=$('thumbs');t.innerHTML='';
   S.files.forEach((f,i)=>{const d=document.createElement('div');
     if(isPdf(f)){const p=document.createElement('div');p.className='pdf';p.textContent='PDF';d.appendChild(p);}
     else{const im=document.createElement('img');im.src=URL.createObjectURL(f);d.appendChild(im);}
-    const x=document.createElement('span');x.textContent='×';x.onclick=()=>{S.files.splice(i,1);drawThumbs()};d.appendChild(x);t.appendChild(d);});
+    const x=document.createElement('span');x.textContent='×';x.onclick=()=>{S.crops.delete(f);S.files.splice(i,1);drawThumbs()};d.appendChild(x);
+    if(!isPdf(f)){const c=document.createElement('b');c.className='crop';c.textContent='✂';c.title='Ritaglia / ruota';c.onclick=()=>openEd(f);d.appendChild(c);
+      if(S.crops.has(f)) d.firstChild.classList.add('cut');}
+    t.appendChild(d);});
   $('go').disabled=!S.files.length;}
 
-// immagine pronta per l'OCR: scala di grigi, contrasto, ~2400px
-async function prep(src){
-  let w,h,draw;
-  if(src instanceof Blob){const b=await createImageBitmap(src);w=b.width;h=b.height;draw=(c,W,H)=>c.drawImage(b,0,0,W,H);}
-  else{w=src.width;h=src.height;draw=(c,W,H)=>c.drawImage(src,0,0,W,H);}
-  const k=Math.min(2.5,2400/Math.max(w,h));const cv=document.createElement('canvas');cv.width=Math.round(w*k);cv.height=Math.round(h*k);
-  const c=cv.getContext('2d');draw(c,cv.width,cv.height);
-  const im=c.getImageData(0,0,cv.width,cv.height),d=im.data;
-  for(let i=0;i<d.length;i+=4){let g=.299*d[i]+.587*d[i+1]+.114*d[i+2];g=(g-128)*1.5+128;g=g<0?0:g>255?255:g;d[i]=d[i+1]=d[i+2]=g;}
-  c.putImageData(im,0,0);return cv;}
+// ---------- ritaglio / rotazione ----------
+let ED=null;
+async function openEd(f){
+  const bmp=await createImageBitmap(f);const c0=S.crops.get(f)||{rot:0,x:0,y:0,w:1,h:1};
+  ED={f,bmp,rot:c0.rot,sel:c0.w<1||c0.h<1?{x:c0.x,y:c0.y,w:c0.w,h:c0.h}:null};
+  $('ed').classList.remove('hide');drawEd();}
+function drawEd(){const {bmp,rot}=ED,cv=$('edCv');const sw=rot%180?bmp.height:bmp.width,sh=rot%180?bmp.width:bmp.height;
+  const k=Math.min(1,1600/Math.max(sw,sh));cv.width=Math.round(sw*k);cv.height=Math.round(sh*k);const c=cv.getContext('2d');
+  c.save();c.translate(cv.width/2,cv.height/2);c.rotate(rot*Math.PI/180);c.drawImage(bmp,-bmp.width*k/2,-bmp.height*k/2,bmp.width*k,bmp.height*k);c.restore();
+  if(ED.sel){const r=ED.sel;c.fillStyle='rgba(0,0,0,.55)';c.beginPath();c.rect(0,0,cv.width,cv.height);c.rect(r.x*cv.width,r.y*cv.height,r.w*cv.width,r.h*cv.height);c.fill('evenodd');
+    c.strokeStyle='#7cc08d';c.lineWidth=Math.max(2,cv.width/300);c.strokeRect(r.x*cv.width,r.y*cv.height,r.w*cv.width,r.h*cv.height);}}
+(()=>{const cv=$('edCv');let st=null;
+  const pos=e=>{const b=cv.getBoundingClientRect();return {x:Math.min(1,Math.max(0,(e.clientX-b.left)/b.width)),y:Math.min(1,Math.max(0,(e.clientY-b.top)/b.height))}};
+  cv.onpointerdown=e=>{cv.setPointerCapture(e.pointerId);st=pos(e);ED.sel=null;};
+  cv.onpointermove=e=>{if(!st)return;const p=pos(e);ED.sel={x:Math.min(st.x,p.x),y:Math.min(st.y,p.y),w:Math.abs(p.x-st.x),h:Math.abs(p.y-st.y)};drawEd();};
+  cv.onpointerup=()=>{st=null;if(ED.sel&&(ED.sel.w<.03||ED.sel.h<.03))ED.sel=null;drawEd();};})();
+$('edL').onclick=()=>{ED.rot=(ED.rot+270)%360;ED.sel=null;drawEd();};
+$('edR').onclick=()=>{ED.rot=(ED.rot+90)%360;ED.sel=null;drawEd();};
+$('edAll').onclick=()=>{ED.sel=null;drawEd();};
+$('edNo').onclick=()=>{$('ed').classList.add('hide');ED=null;};
+$('edOk').onclick=()=>{const s=ED.sel||{x:0,y:0,w:1,h:1};
+  if(!ED.rot&&!ED.sel) S.crops.delete(ED.f); else S.crops.set(ED.f,{rot:ED.rot,...s});
+  $('ed').classList.add('hide');ED=null;drawThumbs();};
+
+// ---------- immagine pronta per l'OCR ----------
+// ritaglio + rotazione + ingrandimento, poi due versioni: grigio "stirato" e bianco/nero con soglia adattiva (contro ombre)
+// stima l'inclinazione del testo (gradi) su una copia piccola
+function skewAngle(cv){
+  const k=Math.min(1,700/Math.max(cv.width,cv.height)),w=Math.round(cv.width*k),h=Math.round(cv.height*k);
+  const t=document.createElement('canvas');t.width=w;t.height=h;const c=t.getContext('2d',{willReadFrequently:true});c.drawImage(cv,0,0,w,h);
+  const d=c.getImageData(0,0,w,h).data,I=new Float64Array((w+1)*(h+1)),R=Math.max(4,Math.round(Math.max(w,h)/30));
+  for(let y=0;y<h;y++){let row=0;for(let x=0;x<w;x++){row+=d[(y*w+x)*4];I[(y+1)*(w+1)+x+1]=I[y*(w+1)+x+1]+row;}}
+  const xs=[],ys=[];
+  for(let y=0;y<h;y++){const y1=Math.max(0,y-R),y2=Math.min(h-1,y+R);for(let x=0;x<w;x++){const x1=Math.max(0,x-R),x2=Math.min(w-1,x+R);
+    const cnt=(x2-x1+1)*(y2-y1+1),sum=I[(y2+1)*(w+1)+x2+1]-I[y1*(w+1)+x2+1]-I[(y2+1)*(w+1)+x1]+I[y1*(w+1)+x1];
+    if(d[(y*w+x)*4]*cnt<sum*.75){xs.push(x-w/2);ys.push(y-h/2);}}}
+  if(xs.length<50)return 0;
+  const step=Math.max(1,Math.floor(xs.length/40000));let best=0,bv=-1;
+  for(let a=-15;a<=15;a+=.5){const r=a*Math.PI/180,cs=Math.cos(r),sn=Math.sin(r),H=new Float32Array(h*2+4);
+    for(let i=0;i<xs.length;i+=step){const yy=Math.round(ys[i]*cs-xs[i]*sn+h);if(yy>=0&&yy<H.length)H[yy]++;}
+    let v=0;for(let i=1;i<H.length;i++){const df=H[i]-H[i-1];v+=df*df;}if(v>bv){bv=v;best=a;}}
+  return best;}
+
+async function prep(src,crop,noDeskew){
+  const b=src instanceof Blob?await createImageBitmap(src):src;
+  const rot=(crop&&crop.rot)||0,r=crop||{x:0,y:0,w:1,h:1};
+  const sw=rot%180?b.height:b.width,sh=rot%180?b.width:b.height;
+  const cw=sw*r.w,ch=sh*r.h,k=Math.min(3,2600/Math.max(cw,ch),Math.max(1,1800/Math.max(cw,ch)));
+  const W=Math.round(cw*k),H=Math.round(ch*k);
+  const cv=document.createElement('canvas');cv.width=W;cv.height=H;const c=cv.getContext('2d',{willReadFrequently:true});
+  c.imageSmoothingQuality='high';c.fillStyle='#fff';c.fillRect(0,0,W,H);
+  c.scale(k,k);c.translate(-r.x*sw,-r.y*sh);c.translate(sw/2,sh/2);c.rotate(rot*Math.PI/180);c.drawImage(b,-b.width/2,-b.height/2);
+  const im=c.getImageData(0,0,W,H),d=im.data,n=W*H,g=new Float32Array(n),hist=new Uint32Array(256);
+  for(let i=0;i<n;i++){const v=.299*d[i*4]+.587*d[i*4+1]+.114*d[i*4+2];g[i]=v;hist[v|0]++;}
+  let lo=0,hi=255,acc=0;for(let v=0;v<256;v++){acc+=hist[v];if(acc>n*.01){lo=v;break;}}acc=0;for(let v=255;v>=0;v--){acc+=hist[v];if(acc>n*.01){hi=v;break;}}
+  const sc=255/Math.max(1,hi-lo);
+  for(let i=0;i<n;i++){let v=(g[i]-lo)*sc;v=v<0?0:v>255?255:v;g[i]=v;d[i*4]=d[i*4+1]=d[i*4+2]=v;}
+  c.setTransform(1,0,0,1,0,0);c.putImageData(im,0,0);
+  const sk=noDeskew?0:skewAngle(cv);
+  if(sk){const tmp=document.createElement('canvas');tmp.width=W;tmp.height=H;tmp.getContext('2d').drawImage(cv,0,0);
+    c.fillStyle='#fff';c.fillRect(0,0,W,H);c.translate(W/2,H/2);c.rotate(-sk*Math.PI/180);c.drawImage(tmp,-W/2,-H/2);c.setTransform(1,0,0,1,0,0);
+    const d2=c.getImageData(0,0,W,H).data;for(let i=0;i<n;i++)g[i]=d2[i*4];}
+  // soglia adattiva (Bradley) con immagine integrale
+  const I=new Float64Array((W+1)*(H+1));
+  for(let y=0;y<H;y++){let row=0;for(let x=0;x<W;x++){row+=g[y*W+x];I[(y+1)*(W+1)+x+1]=I[y*(W+1)+x+1]+row;}}
+  const S2=Math.max(8,Math.round(Math.max(W,H)/24)),T=.22;
+  const bc=document.createElement('canvas');bc.width=W;bc.height=H;const bx=bc.getContext('2d',{willReadFrequently:true});const bi=bx.createImageData(W,H),bd=bi.data;
+  for(let y=0;y<H;y++){const y1=Math.max(0,y-S2),y2=Math.min(H-1,y+S2);for(let x=0;x<W;x++){const x1=Math.max(0,x-S2),x2=Math.min(W-1,x+S2);
+    const cnt=(x2-x1+1)*(y2-y1+1),sum=I[(y2+1)*(W+1)+x2+1]-I[y1*(W+1)+x2+1]-I[(y2+1)*(W+1)+x1]+I[y1*(W+1)+x1];
+    const v=g[y*W+x]*cnt<=sum*(1-T)?0:255,o=(y*W+x)*4;bd[o]=bd[o+1]=bd[o+2]=v;bd[o+3]=255;}}
+  bx.putImageData(bi,0,0);
+  // grigio "spianato": divide per la luce locale, toglie ombre senza perdere le sfumature
+  const S3=Math.max(10,Math.round(Math.max(W,H)/16)),gi=c.createImageData(W,H),gd=gi.data;
+  for(let y=0;y<H;y++){const y1=Math.max(0,y-S3),y2=Math.min(H-1,y+S3);for(let x=0;x<W;x++){const x1=Math.max(0,x-S3),x2=Math.min(W-1,x+S3);
+    const cnt=(x2-x1+1)*(y2-y1+1),mean=(I[(y2+1)*(W+1)+x2+1]-I[y1*(W+1)+x2+1]-I[(y2+1)*(W+1)+x1]+I[y1*(W+1)+x1])/cnt;
+    let v=g[y*W+x]/Math.max(1,mean*1.08)*255;v=v>255?255:v;v=255-(255-v)*1.6;v=v<0?0:v;const o=(y*W+x)*4;gd[o]=gd[o+1]=gd[o+2]=v;gd[o+3]=255;}}
+  c.putImageData(gi,0,0);
+  return {gray:cv,bin:bc,sk};}
 
 async function pdfParts(file){
   const lib=window.pdfjsLib; if(!lib) throw new Error('lettore PDF non caricato (serve internet la prima volta)');
@@ -221,34 +306,75 @@ async function pdfParts(file){
     await pg.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise;pages.push({canvas:cv});}
   return pages;}
 
-let worker=null;
-async function getWorker(onp){
-  if(worker) return worker;
+let worker=null,numWorker=null;
+async function mkWorker(onp,params){
   if(!window.Tesseract) throw new Error('lettore di testo non caricato: serve internet la prima volta');
   let fail;const failed=new Promise((_,rej)=>fail=rej);
   const timer=setTimeout(()=>fail(new Error('il lettore non si è caricato: controlla la connessione e riprova')),120000);
   try{
-    worker=await Promise.race([Tesseract.createWorker('ita',1,{
-      logger:m=>{if(m.status==='recognizing text')onp(m.progress)},
+    const w=await Promise.race([Tesseract.createWorker('ita',1,{
+      logger:m=>{if(onp&&m.status==='recognizing text')onp(m.progress)},
       errorHandler:e=>fail(new Error('download del lettore non riuscito: controlla la connessione'))}),failed]);
-    await worker.setParameters({preserve_interword_spaces:'1'});
-  }catch(e){worker=null;throw e;}finally{clearTimeout(timer);}
-  return worker;}
+    await w.setParameters(params);return w;
+  }finally{clearTimeout(timer);}}
+let onProg=()=>{};
+async function getWorker(){ if(!worker) worker=await mkWorker(p=>onProg(p),{preserve_interword_spaces:'1'}); return worker;}
+async function getNumWorker(){ if(!numWorker) numWorker=await mkWorker(null,{tessedit_char_whitelist:"0123456789.,°'\"-NSEWO",tessedit_pageseg_mode:'7'}); return numWorker;}
+
+const digits=t=>(t.match(/\d/g)||[]).length;
+// legge un'immagine: prima tutto, poi rilegge solo i numeri incerti con il lettore "solo cifre"
+async function ocrImage(src,crop,step){
+  const {gray,bin}=await prep(src,crop);
+  const w=await getWorker();
+  step('Leggo il testo…');
+  const read=async cv=>{const r=await w.recognize(cv,{},{text:true,blocks:true});const L=[];
+    for(const bl of r.data.blocks||[])for(const pa of bl.paragraphs)for(const li of pa.lines)L.push(li);return {L,conf:r.data.confidence,pts:Core.parseText(L.map(l=>l.words.map(x=>x.text).join(' ')).join('\n')).length};};
+  let A=await read(gray);
+  if(A.conf<88){step('Riprovo con contrasto forte…');const B=await read(bin);
+    // unisce riga per riga le due letture, tenendo la migliore
+    const score=li=>{const t=li.words.map(x=>x.text).join(' ');const nw=li.words.filter(x=>digits(x.text)>=4);
+      return (Core.parseText(t).length?1000:0)+(nw.length?nw.reduce((s,x)=>s+x.confidence,0)/nw.length:0);};
+    const ov=(a,b)=>Math.max(0,Math.min(a.bbox.y1,b.bbox.y1)-Math.max(a.bbox.y0,b.bbox.y0))/Math.max(1,Math.min(a.bbox.y1-a.bbox.y0,b.bbox.y1-b.bbox.y0));
+    const used=new Set(),M=[];
+    for(const la of A.L){let bi=-1,bo=.5;B.L.forEach((lb,i)=>{const o=ov(la,lb);if(o>bo&&!used.has(i)){bo=o;bi=i;}});
+      if(bi<0){M.push(la);continue;}used.add(bi);M.push(score(B.L[bi])>score(la)?B.L[bi]:la);}
+    B.L.forEach((lb,i)=>{if(!used.has(i)&&Core.parseText(lb.words.map(x=>x.text).join(' ')).length)M.push(lb);});
+    M.sort((x,y)=>x.bbox.y0-y.bbox.y0);A={L:M};}
+  const todo=[];A.L.forEach(li=>li.words.forEach(wd=>{const t=Core.fixDigits(wd.text);if(digits(t)>=4&&(wd.confidence<92||/[^\d.,°'"\-NSEWO]/.test(t)))todo.push(wd);}));
+  if(todo.length){const nw=await getNumWorker();let i=0;
+    for(const wd of todo){step(`Ricontrollo i numeri… ${++i}/${todo.length}`);
+      const b=wd.bbox,pad=Math.round((b.y1-b.y0)*.35),rect={left:Math.max(0,b.x0-pad),top:Math.max(0,b.y0-pad),width:b.x1-b.x0+2*pad,height:b.y1-b.y0+2*pad};
+      let best={t:wd.text,c:wd.confidence};
+      for(const cv of [gray,bin]){const r=await nw.recognize(cv,{rectangle:rect});const t=r.data.text.replace(/\s+/g,'');
+        if(digits(t)>=Math.max(4,digits(Core.fixDigits(wd.text))-1)&&r.data.confidence>best.c+2)best={t,c:r.data.confidence};}
+      wd.text=best.t;wd.confidence=best.c;}}
+  // righe con un solo numero leggibile: rilettura dell'intera riga "solo cifre"
+  const nw2=await getNumWorker();
+  for(const li of A.L){const txt=li.words.map(x=>x.text).join(' ');
+    if(Core.parseText(txt).length||!li.words.some(x=>digits(Core.fixDigits(x.text))>=4))continue;
+    step('Ricontrollo le righe incomplete…');
+    const b=li.bbox,pad=Math.round((b.y1-b.y0)*.3),rect={left:Math.max(0,b.x0-pad),top:Math.max(0,b.y0-pad),width:b.x1-b.x0+2*pad,height:b.y1-b.y0+2*pad};
+    for(const cv of [gray,bin]){const r=await nw2.recognize(cv,{rectangle:rect});const nums=(r.data.text.match(/\d{6,7}/g)||[]);
+      if(nums.length>=2){const k=li.words.findIndex(x=>digits(Core.fixDigits(x.text))>=4);const name=li.words.slice(0,k).map(x=>x.text).join(' ');
+        li.words=[{text:name,confidence:90},{text:nums[0],confidence:60},{text:nums[1],confidence:60}];break;}}}
+  A.L.forEach(li=>li.words.forEach(wd=>{if(wd.confidence<70&&digits(wd.text)>=4)S.low.add(Core.fixDigits(wd.text).replace(/[^\d]/g,''));}));
+  return A.L.map(l=>l.words.map(x=>x.text).join(' ')).join('\n');}
 
 $('go').onclick=async()=>{
   const st=$('status'),bar=$('bar'),fill=bar.firstElementChild;st.className='msg';$('go').disabled=true;bar.classList.remove('hide');
   const jobs=[];let done=0;
   try{
     st.innerHTML='<span class="spin"></span>Preparo i file…';
-    for(const f of S.files){ if(isPdf(f)) (await pdfParts(f)).forEach(p=>jobs.push(p)); else jobs.push({blob:f}); }
+    S.low=new Set();
+    for(const f of S.files){ if(isPdf(f)) (await pdfParts(f)).forEach(p=>jobs.push(p)); else jobs.push({blob:f,crop:S.crops.get(f)}); }
     const ocrN=jobs.filter(j=>!j.text).length;
     let all='';
     for(const j of jobs){
       if(j.text){all+=j.text+'\n';continue;}
-      st.innerHTML=`<span class="spin"></span>Leggo il testo… ${done+1}/${ocrN}`+(worker?'':' (prima volta: scarico il lettore)');
-      const w=await getWorker(p=>{fill.style.width=Math.round(((done+p)/ocrN)*100)+'%'});
-      const cv=await prep(j.blob||j.canvas);
-      const r=await w.recognize(cv);all+=r.data.text+'\n';done++;
+      const tag=ocrN>1?` (${done+1}/${ocrN})`:'';
+      onProg=p=>{fill.style.width=Math.round(((done+p)/ocrN)*100)+'%'};
+      if(!worker) st.innerHTML='<span class="spin"></span>Prima volta: scarico il lettore…';
+      all+=await ocrImage(j.blob||j.canvas,j.crop,m=>{st.innerHTML='<span class="spin"></span>'+m+tag;})+'\n';done++;
     }
     fill.style.width='100%';
     $('txt').value=all.trim();
@@ -284,8 +410,14 @@ const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 function render(){
   const has=S.points.length;$('ptsCard').classList.toggle('hide',!has);$('outCard').classList.toggle('hide',!has);
   $('cnt').textContent=has;const set=settings();
-  $('pts').innerHTML=S.points.map((p,i)=>{const r=Core.convertPoint(p,set,proj4);p._r=r;const g=p.kind==='geo';
-    return `<div class="pt ${r.err?'bad':''}" data-i="${i}">
+  S.points.forEach(p=>p._r=Core.convertPoint(p,set,proj4));
+  const ok=S.points.filter(p=>!p._r.err),med=a=>{const s=[...a].sort((x,y)=>x-y);return s[s.length>>1]};
+  const mLat=ok.length?med(ok.map(p=>p._r.lat)):0,mLon=ok.length?med(ok.map(p=>p._r.lon)):0;
+  const dist=p=>Math.hypot((p._r.lat-mLat)*111,(p._r.lon-mLon)*111*Math.cos(mLat*Math.PI/180));
+  const typ=ok.length>=3?med(ok.map(dist)):0;
+  $('pts').innerHTML=S.points.map((p,i)=>{const r=p._r;const g=p.kind==='geo';
+    const far=ok.length>=3&&!r.err&&dist(p)>Math.max(5,typ*6);
+    return `<div class="pt ${r.err||far?'bad':''}" data-i="${i}">
       <div class="top"><span class="n">${i+1}</span><input data-f="name" value="${esc(p.name)}" placeholder="Nome"><button class="x" data-del="${i}">×</button></div>
       <input data-f="desc" value="${esc(p.desc)}" placeholder="Descrizione (facoltativa)" style="margin-top:6px;font-size:13.5px">
       <div class="vals">
@@ -295,7 +427,7 @@ function render(){
       </div>
       ${!g&&set.sys==='utm'?`<input data-f="zone" value="${esc(p.zone)}" placeholder="Zona (vuoto = ${set.zone})" style="margin-top:6px;font-size:13px;max-width:200px">`:''}
       <div class="res">${r.err?'<span style="color:var(--err)">⚠ '+esc(r.err)+'</span>':
-        `WGS84 → <a href="https://www.google.com/maps?q=${r.lat.toFixed(6)},${r.lon.toFixed(6)}" target="_blank" rel="noopener">${r.lat.toFixed(6)}, ${r.lon.toFixed(6)}</a>${r.info?' · '+r.info:''}`}</div>
+        (far?`<span class="low">⚠ lontano ${Math.round(dist(p))} km dagli altri punti: controlla le cifre</span><br>`:'')+(S.low.has(String(p.a).replace(/\D/g,''))||S.low.has(String(p.b).replace(/\D/g,''))?'<span class="low">⚠ cifre poco leggibili: controllale</span><br>':'')+`WGS84 → <a href="https://www.google.com/maps?q=${r.lat.toFixed(6)},${r.lon.toFixed(6)}" target="_blank" rel="noopener">${r.lat.toFixed(6)}, ${r.lon.toFixed(6)}</a>${r.info?' · '+r.info:''}`}</div>
     </div>`}).join('');}
 $('pts').addEventListener('change',e=>{const el=e.target,f=el.dataset.f;if(!f)return;S.points[+el.closest('.pt').dataset.i][f]=el.value;render();});
 $('pts').addEventListener('click',e=>{const d=e.target.dataset.del;if(d==null)return;S.points.splice(+d,1);render();});
