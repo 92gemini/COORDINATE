@@ -129,14 +129,14 @@ button:disabled{opacity:.5;cursor:default}
 <section class="card">
   <h2>Testo letto <small style="text-transform:none;letter-spacing:0">(puoi correggerlo o incollarlo qui)</small></h2>
   <textarea id="txt" placeholder="OBJ 1  290013 4874586&#10;OBJ 2  290187 4873603"></textarea>
-  <div class="row"><button id="parse">Estrai punti dal testo</button></div>
+  <div class="row"><button id="parse">Estrai punti dal testo</button><button id="clearTxt">🗑 Cancella testo</button></div>
 </section>
 
 <section class="card hide" id="ptsCard">
   <h2>3 · Controlla i punti (<span id="cnt">0</span>)</h2>
   <div id="notes" class="msg warn hide"></div>
   <div id="pts"></div>
-  <div class="row"><button id="add">+ Aggiungi punto</button><button id="clear">Svuota</button></div>
+  <div class="row"><button id="add">+ Aggiungi punto</button><button id="clear">🗑 Svuota tutto</button></div>
   <p class="hint">m = Est/Nord in metri · ° = Lat/Lon in gradi. Tocca le coordinate WGS84 per verificarle su Google Maps.</p>
 </section>
 
@@ -300,7 +300,8 @@ function render(){
 $('pts').addEventListener('change',e=>{const el=e.target,f=el.dataset.f;if(!f)return;S.points[+el.closest('.pt').dataset.i][f]=el.value;render();});
 $('pts').addEventListener('click',e=>{const d=e.target.dataset.del;if(d==null)return;S.points.splice(+d,1);render();});
 $('add').onclick=()=>{S.points.push({name:'P'+(S.points.length+1),desc:'',kind:$('sys').value==='geo'?'geo':'proj',a:'',b:'',zone:''});render();};
-$('clear').onclick=()=>{S.points=[];render();$('status').textContent='';};
+$('clear').onclick=()=>{S.points=[];S.files=[];drawThumbs();$('txt').value='';$('notes').classList.add('hide');render();$('status').textContent='';$('outMsg').textContent='';};
+$('clearTxt').onclick=()=>{$('txt').value='';$('txt').focus();};
 
 // ---------- export ----------
 function good(){return S.points.filter(p=>p._r&&!p._r.err).map(p=>({name:p.name,desc:p.desc,lat:p._r.lat,lon:p._r.lon}));}
