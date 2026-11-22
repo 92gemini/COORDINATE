@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coordinate → GPX / KML</title>
+<meta name="theme-color" content="#2f6b3f">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script src="https://cdn.jsdelivr.net/npm/proj4@2.23.0/dist/proj4.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+<script src="core.js"></script>
+<style>
+:root{--bg:#f4f5f1;--card:#fff;--ink:#1d2320;--mut:#69716c;--line:#dfe2dc;--acc:#2f6b3f;--acc2:#e8f1ea;--warn:#a5531b;--err:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#141815;--card:#1d221e;--ink:#e8ebe7;--mut:#9aa39c;--line:#313831;--acc:#7cc08d;--acc2:#24332a;--warn:#e19a5e;--err:#f08b84}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:760px;margin:0 auto;padding:16px 14px 80px}
+h1{font-size:20px;margin:4px 0 2px}
+.sub{color:var(--mut);margin:0 0 14px;font-size:13.5px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 10px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:520px){.grid{grid-template-columns:1fr}}
+label{display:block;font-size:12.5px;color:var(--mut);margin-bottom:3px}
+select,input,textarea{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 9px}
+textarea{min-height:110px;resize:vertical;font-family:ui-monospace,Menlo,monospace;font-size:13px}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{flex:1;min-width:80px}
+button{font:inherit;cursor:pointer;border-radius:9px;padding:9px 12px;border:1px solid var(--line);background:var(--card);color:var(--ink)}
+button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+button.pri{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+button:disabled{opacity:.5;cursor:default}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:18px;text-align:center;color:var(--mut);cursor:pointer}
+.drop.hover{border-color:var(--acc);background:var(--acc2)}
+.thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.thumbs>div{position:relative}
+.thumbs img,.thumbs .pdf{width:70px;height:70px;object-fit:cover;border-radius:8px;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--mut)}
+.thumbs span{position:absolute;top:-6px;right:-6px;background:var(--err);color:#fff;border-radius:50%;width:20px;height:20px;font-size:12px;line-height:20px;text-align:center;cursor:pointer}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.msg{font-size:13.5px;margin-top:8px}
+.msg.err{color:var(--err)} .msg.warn{color:var(--warn)}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:8px}
+.bar i{display:block;height:100%;background:var(--acc);width:0;transition:width .2s}
+.pt{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px}
+.pt .top{display:flex;gap:8px;align-items:center}
+.pt .top input{font-weight:600}
+.pt .n{color:var(--mut);font-size:12px;min-width:22px}
+.pt .x{border:none;background:none;color:var(--err);font-size:18px;padding:4px 8px}
+.pt .vals{display:grid;grid-template-columns:1fr 1fr 64px;gap:6px;margin-top:6px}
+.pt .res{font-size:12.5px;color:var(--mut);margin-top:6px;font-family:ui-monospace,Menlo,monospace}
+.pt .res a{color:var(--acc)}
+.pt.bad{border-color:var(--err)}
+.hint{font-size:12px;color:var(--mut);margin-top:6px}
+.hide{display:none!important}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes s{to{transform:rotate(360deg)}}
+#inst{border-color:var(--acc)}
+</style>
+</head>
+<body>
+<main>
+<h1>Coordinate → GPX / KML</h1>
+<p class="sub">Foto, screenshot o PDF con l'elenco dei punti → file GPX e KML in WGS84.</p>
+<div id="inst" class="card hide">
+  <b>Installa l'app</b> sulla schermata Home
+  <div class="row"><button class="pri" id="instBtn">Installa</button><button id="instNo">Non ora</button></div>
+</div>
+
+<section class="card">
+  <h2>1 · Coordinate di partenza</h2>
+  <div class="grid">
+    <div>
+      <label>Map datum</label>
+      <div class="seg" id="datumSeg">
+        <button data-v="wgs84" class="on">WGS84</button>
+        <button data-v="roma40">Roma40</button>
+        <button data-v="ed50">ED50</button>
+      </div>
+    </div>
+    <div>
+      <label>Sistema / formato</label>
+      <select id="sys"></select>
+    </div>
+    <div id="zoneBox">
+      <label>Zona UTM (se non scritta sul foglio)</label>
+      <select id="zone">
+        <option value="32">32 (Nord-Ovest, Sardegna)</option>
+        <option value="33">33 (Centro-Est, Sud, Sicilia)</option>
+        <option value="34">34</option>
+        <option value="31">31</option>
+      </select>
+    </div>
+    <div id="fusoBox" class="hide">
+      <label>Fuso Gauss-Boaga</label>
+      <select id="fuso">
+        <option value="auto">Automatico (Est 1.xxx = Ovest, 2.xxx = Est)</option>
+        <option value="O">Ovest (Fuso 1, EPSG 3003)</option>
+        <option value="E">Est (Fuso 2, EPSG 3004)</option>
+      </select>
+    </div>
+    <div id="mmBox" class="hide">
+      <label>Longitudine riferita a</label>
+      <select id="lonRef">
+        <option value="gw">Greenwich</option>
+        <option value="mm">Monte Mario (carte IGM vecchie)</option>
+      </select>
+    </div>
+  </div>
+  <p class="hint">I file in uscita sono sempre in WGS84 (GPS, OruxMaps, Google Earth). Se il foglio indica datum o zona li imposto io e te lo segnalo.</p>
+</section>
+
+<section class="card">
+  <h2>2 · Carica</h2>
+  <div class="drop" id="drop">📷 Tocca per scegliere foto, screenshot o PDF<br><small>anche più file insieme</small></div>
+  <input type="file" id="file" accept="image/*,application/pdf" multiple class="hide">
+  <div class="thumbs" id="thumbs"></div>
+  <div class="row">
+    <button class="pri" id="go" disabled>Leggi coordinate</button>
+    <span id="status" class="msg"></span>
+  </div>
+  <div class="bar hide" id="bar"><i></i></div>
+  <p class="hint">La prima lettura scarica il lettore di testo (qualche MB): serve internet solo la prima volta.</p>
+</section>
+
+<section class="card">
+  <h2>Testo letto <small style="text-transform:none;letter-spacing:0">(puoi correggerlo o incollarlo qui)</small></h2>
+  <textarea id="txt" placeholder="OBJ 1  290013 4874586&#10;OBJ 2  290187 4873603"></textarea>
+  <div class="row"><button id="parse">Estrai punti dal testo</button></div>
+</section>
+
+<section class="card hide" id="ptsCard">
+  <h2>3 · Controlla i punti (<span id="cnt">0</span>)</h2>
+  <div id="notes" class="msg warn hide"></div>
+  <div id="pts"></div>
+  <div class="row"><button id="add">+ Aggiungi punto</button><button id="clear">Svuota</button></div>
+  <p class="hint">m = Est/Nord in metri · ° = Lat/Lon in gradi. Tocca le coordinate WGS84 per verificarle su Google Maps.</p>
+</section>
+
+<section class="card hide" id="outCard">
+  <h2>4 · Esporta</h2>
+  <label>Nome file</label><input id="fname" value="coordinate">
+  <div class="row">
+    <button class="pri" id="dlGpx">⬇ GPX</button>
+    <button class="pri" id="dlKml">⬇ KML</button>
+    <button id="share" class="hide">📤 Condividi</button>
+  </div>
+  <div id="outMsg" class="msg"></div>
+  <p class="hint">"Condividi" manda i file direttamente a OruxMaps, WhatsApp, Drive…</p>
+</section>
+</main>
+
+
+<script>
+(()=>{
+const $=id=>document.getElementById(id);
+const S={datum:'wgs84',files:[],points:[]};
+const SYS={wgs84:[['utm','UTM (Est / Nord)'],['geo','Geografiche (gradi)']],
+           ed50:[['utm','UTM ED50 (Est / Nord)'],['geo','Geografiche ED50 (gradi)']],
+           roma40:[['gb','Gauss-Boaga (Est / Nord)'],['geo','Geografiche Roma40 (gradi)'],['utm','UTM su Roma40']]};
+
+// ---------- impostazioni (ricordate) ----------
+function save(){try{localStorage.setItem('cfg',JSON.stringify({datum:S.datum,sys:$('sys').value,zone:$('zone').value,fuso:$('fuso').value,lonRef:$('lonRef').value}))}catch(e){}}
+function setDatum(v){S.datum=v;[...$('datumSeg').children].forEach(x=>x.classList.toggle('on',x.dataset.v===v));
+  const s=$('sys'),old=s.value;s.innerHTML=SYS[v].map(([k,t])=>`<option value="${k}">${t}</option>`).join('');
+  if([...s.options].some(o=>o.value===old)) s.value=old;}
+function syncBoxes(){const v=$('sys').value;
+  $('zoneBox').classList.toggle('hide',v!=='utm');$('fusoBox').classList.toggle('hide',v!=='gb');
+  $('mmBox').classList.toggle('hide',!(v==='geo'&&S.datum==='roma40'));save();render();}
+$('datumSeg').onclick=e=>{const b=e.target.closest('button');if(!b)return;setDatum(b.dataset.v);syncBoxes();};
+$('sys').onchange=syncBoxes;
+['zone','fuso','lonRef'].forEach(id=>$(id).onchange=()=>{save();render();});
+let cfg={};try{cfg=JSON.parse(localStorage.getItem('cfg')||'{}')}catch(e){}
+setDatum(cfg.datum||'wgs84'); if(cfg.sys) $('sys').value=cfg.sys;
+$('zone').value=cfg.zone||'33'; if(cfg.fuso) $('fuso').value=cfg.fuso; if(cfg.lonRef) $('lonRef').value=cfg.lonRef;
+function settings(){return {datum:S.datum,sys:$('sys').value,zone:$('zone').value,fuso:$('fuso').value,lonRef:$('lonRef').value};}
+
+// ---------- file ----------
+const drop=$('drop');
+drop.onclick=()=>$('file').click();
+$('file').onchange=e=>{addFiles(e.target.files);e.target.value='';};
+drop.ondragover=e=>{e.preventDefault();drop.classList.add('hover')};
+drop.ondragleave=()=>drop.classList.remove('hover');
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove('hover');addFiles(e.dataTransfer.files)};
+function isPdf(f){return f.type==='application/pdf'||/\.pdf$/i.test(f.name)}
+function addFiles(list){[...list].forEach(f=>{if(/^image\//.test(f.type)||isPdf(f)) S.files.push(f)});drawThumbs();}
+function drawThumbs(){const t=$('thumbs');t.innerHTML='';
+  S.files.forEach((f,i)=>{const d=document.createElement('div');
+    if(isPdf(f)){const p=document.createElement('div');p.className='pdf';p.textContent='PDF';d.appendChild(p);}
+    else{const im=document.createElement('img');im.src=URL.createObjectURL(f);d.appendChild(im);}
+    const x=document.createElement('span');x.textContent='×';x.onclick=()=>{S.files.splice(i,1);drawThumbs()};d.appendChild(x);t.appendChild(d);});
+  $('go').disabled=!S.files.length;}
+
+// immagine pronta per l'OCR: scala di grigi, contrasto, ~2400px
+async function prep(src){
+  let w,h,draw;
+  if(src instanceof Blob){const b=await createImageBitmap(src);w=b.width;h=b.height;draw=(c,W,H)=>c.drawImage(b,0,0,W,H);}
+  else{w=src.width;h=src.height;draw=(c,W,H)=>c.drawImage(src,0,0,W,H);}
+  const k=Math.min(2.5,2400/Math.max(w,h));const cv=document.createElement('canvas');cv.width=Math.round(w*k);cv.height=Math.round(h*k);
+  const c=cv.getContext('2d');draw(c,cv.width,cv.height);
+  const im=c.getImageData(0,0,cv.width,cv.height),d=im.data;
+  for(let i=0;i<d.length;i+=4){let g=.299*d[i]+.587*d[i+1]+.114*d[i+2];g=(g-128)*1.5+128;g=g<0?0:g>255?255:g;d[i]=d[i+1]=d[i+2]=g;}
+  c.putImageData(im,0,0);return cv;}
+
+async function pdfParts(file){
+  const lib=window.pdfjsLib; if(!lib) throw new Error('lettore PDF non caricato (serve internet la prima volta)');
+  lib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const doc=await lib.getDocument({data:await file.arrayBuffer(),isEvalSupported:false}).promise;
+  const pages=[];
+  for(let i=1;i<=Math.min(doc.numPages,15);i++){const pg=await doc.getPage(i);
+    const tc=await pg.getTextContent();
+    // ricostruisce le righe dal PDF
+    const rows={};tc.items.forEach(t=>{const y=Math.round(t.transform[5]/3);(rows[y]=rows[y]||[]).push(t)});
+    const text=Object.keys(rows).sort((a,b)=>b-a).map(y=>rows[y].sort((a,b)=>a.transform[4]-b.transform[4]).map(t=>t.str).join(' ')).join('\n');
+    if((text.match(/\d/g)||[]).length>=12){pages.push({text});continue;}
+    const vp0=pg.getViewport({scale:1});const vp=pg.getViewport({scale:Math.min(3,2400/Math.max(vp0.width,vp0.height))});
+    const cv=document.createElement('canvas');cv.width=vp.width;cv.height=vp.height;
+    await pg.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise;pages.push({canvas:cv});}
+  return pages;}
+
+let worker=null;
+async function getWorker(onp){
+  if(worker) return worker;
+  if(!window.Tesseract) throw new Error('lettore di testo non caricato: serve internet la prima volta');
+  let fail;const failed=new Promise((_,rej)=>fail=rej);
+  const timer=setTimeout(()=>fail(new Error('il lettore non si è caricato: controlla la connessione e riprova')),120000);
+  try{
+    worker=await Promise.race([Tesseract.createWorker('ita',1,{
+      logger:m=>{if(m.status==='recognizing text')onp(m.progress)},
+      errorHandler:e=>fail(new Error('download del lettore non riuscito: controlla la connessione'))}),failed]);
+    await worker.setParameters({preserve_interword_spaces:'1'});
+  }catch(e){worker=null;throw e;}finally{clearTimeout(timer);}
+  return worker;}
+
+$('go').onclick=async()=>{
+  const st=$('status'),bar=$('bar'),fill=bar.firstElementChild;st.className='msg';$('go').disabled=true;bar.classList.remove('hide');
+  const jobs=[];let done=0;
+  try{
+    st.innerHTML='<span class="spin"></span>Preparo i file…';
+    for(const f of S.files){ if(isPdf(f)) (await pdfParts(f)).forEach(p=>jobs.push(p)); else jobs.push({blob:f}); }
+    const ocrN=jobs.filter(j=>!j.text).length;
+    let all='';
+    for(const j of jobs){
+      if(j.text){all+=j.text+'\n';continue;}
+      st.innerHTML=`<span class="spin"></span>Leggo il testo… ${done+1}/${ocrN}`+(worker?'':' (prima volta: scarico il lettore)');
+      const w=await getWorker(p=>{fill.style.width=Math.round(((done+p)/ocrN)*100)+'%'});
+      const cv=await prep(j.blob||j.canvas);
+      const r=await w.recognize(cv);all+=r.data.text+'\n';done++;
+    }
+    fill.style.width='100%';
+    $('txt').value=all.trim();
+    const n=runParse();
+    st.className=n?'msg':'msg err';
+    st.textContent=n?`✓ ${n} punti trovati: controllali sotto`:'Nessuna coordinata riconosciuta: correggi il testo sopra e premi "Estrai punti".';
+  }catch(e){st.className='msg err';st.textContent='Errore: '+((e&&e.message)||e);}
+  finally{$('go').disabled=!S.files.length;setTimeout(()=>bar.classList.add('hide'),800);}
+};
+
+function runParse(){
+  const text=$('txt').value;const pts=Core.parseText(text);
+  const h=Core.detectHints(text);const notes=[];
+  if(h.datum&&h.datum!==S.datum){setDatum(h.datum);notes.push('Sul foglio c\'è scritto '+h.datum.toUpperCase()+': datum impostato.');}
+  if(pts.length){
+    const proj=pts.filter(p=>p.kind==='proj');
+    if(proj.length){
+      const gb=proj.every(p=>Math.min(p.a,p.b)>=1e6);
+      if(gb&&S.datum==='roma40') $('sys').value='gb';
+      else if(gb){notes.push('Est con 7 cifre (1.xxx.xxx / 2.xxx.xxx): sembrano Gauss-Boaga. Se è così scegli datum Roma40.');}
+      else if(SYS[S.datum].some(s=>s[0]==='utm')) $('sys').value='utm';
+      const z=proj.map(p=>parseInt(p.zone)).find(z=>z>0);
+      if(z&&[...$('zone').options].some(o=>o.value==z)) $('zone').value=String(z);
+      if(!z&&$('sys').value==='utm') notes.push('Zona UTM non trovata nel testo: uso '+$('zone').value+'.');
+    } else $('sys').value='geo';
+  }
+  S.points=pts;const w=$('notes');w.textContent=notes.join(' ');w.classList.toggle('hide',!notes.length);
+  syncBoxes();return pts.length;}
+$('parse').onclick=()=>{const n=runParse();const st=$('status');st.className=n?'msg':'msg err';st.textContent=n?`✓ ${n} punti trovati`:'Nessuna coordinata riconosciuta nel testo.';};
+
+// ---------- lista punti ----------
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function render(){
+  const has=S.points.length;$('ptsCard').classList.toggle('hide',!has);$('outCard').classList.toggle('hide',!has);
+  $('cnt').textContent=has;const set=settings();
+  $('pts').innerHTML=S.points.map((p,i)=>{const r=Core.convertPoint(p,set,proj4);p._r=r;const g=p.kind==='geo';
+    return `<div class="pt ${r.err?'bad':''}" data-i="${i}">
+      <div class="top"><span class="n">${i+1}</span><input data-f="name" value="${esc(p.name)}" placeholder="Nome"><button class="x" data-del="${i}">×</button></div>
+      <input data-f="desc" value="${esc(p.desc)}" placeholder="Descrizione (facoltativa)" style="margin-top:6px;font-size:13.5px">
+      <div class="vals">
+        <input data-f="a" value="${esc(p.a)}" placeholder="${g?'Lat':'Est'}" inputmode="decimal">
+        <input data-f="b" value="${esc(p.b)}" placeholder="${g?'Lon':'Nord'}" inputmode="decimal">
+        <select data-f="kind"><option value="proj" ${!g?'selected':''}>m</option><option value="geo" ${g?'selected':''}>°</option></select>
+      </div>
+      ${!g&&set.sys==='utm'?`<input data-f="zone" value="${esc(p.zone)}" placeholder="Zona (vuoto = ${set.zone})" style="margin-top:6px;font-size:13px;max-width:200px">`:''}
+      <div class="res">${r.err?'<span style="color:var(--err)">⚠ '+esc(r.err)+'</span>':
+        `WGS84 → <a href="https://www.google.com/maps?q=${r.lat.toFixed(6)},${r.lon.toFixed(6)}" target="_blank" rel="noopener">${r.lat.toFixed(6)}, ${r.lon.toFixed(6)}</a>${r.info?' · '+r.info:''}`}</div>
+    </div>`}).join('');}
+$('pts').addEventListener('change',e=>{const el=e.target,f=el.dataset.f;if(!f)return;S.points[+el.closest('.pt').dataset.i][f]=el.value;render();});
+$('pts').addEventListener('click',e=>{const d=e.target.dataset.del;if(d==null)return;S.points.splice(+d,1);render();});
+$('add').onclick=()=>{S.points.push({name:'P'+(S.points.length+1),desc:'',kind:$('sys').value==='geo'?'geo':'proj',a:'',b:'',zone:''});render();};
+$('clear').onclick=()=>{S.points=[];render();$('status').textContent='';};
+
+// ---------- export ----------
+function good(){return S.points.filter(p=>p._r&&!p._r.err).map(p=>({name:p.name,desc:p.desc,lat:p._r.lat,lon:p._r.lon}));}
+function src(){return 'Origine: '+S.datum.toUpperCase()+' – '+$('sys').selectedOptions[0].text;}
+function base(){return ($('fname').value.trim()||'coordinate').replace(/[\\/:*?"<>|]+/g,'_');}
+function outMsg(t,c){const m=$('outMsg');m.className='msg '+(c||'');m.textContent=t;}
+function make(kind){const g=good();if(!g.length){outMsg('Nessun punto valido da esportare.','err');return null;}
+  const bad=S.points.length-g.length;outMsg(bad?bad+' punti con errori esclusi.':'',bad?'warn':'');
+  const t=kind==='gpx'?Core.buildGpx(g,base(),src()):Core.buildKml(g,base(),src());
+  return new File([t],base()+'.'+kind,{type:kind==='gpx'?'application/gpx+xml':'application/vnd.google-earth.kml+xml'});}
+function dl(kind){const f=make(kind);if(!f)return;const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=f.name;
+  document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+  if(!$('outMsg').textContent) outMsg('✓ '+f.name+' scaricato ('+good().length+' punti)');}
+$('dlGpx').onclick=()=>dl('gpx');$('dlKml').onclick=()=>dl('kml');
+if(navigator.canShare){ $('share').classList.remove('hide');
+  $('share').onclick=async()=>{const g=make('gpx'),k=make('kml');if(!g)return;
+    let files=[g,k];if(!navigator.canShare({files})) files=[new File([await g.text()],g.name,{type:'application/octet-stream'}),new File([await k.text()],k.name,{type:'application/octet-stream'})];
+    try{await navigator.share({files,title:base()});}catch(e){if(e.name!=='AbortError')outMsg('Condivisione non riuscita: usa i pulsanti di download.','err');}};}
+
+// ---------- installazione / offline ----------
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+let deferred=null;
+addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferred=e;$('inst').classList.remove('hide');});
+$('instBtn').onclick=async()=>{$('inst').classList.add('hide');if(deferred){deferred.prompt();deferred=null;}};
+$('instNo').onclick=()=>$('inst').classList.add('hide');
+
+syncBoxes();
+})();
+</script>
+</body>
+</html>
